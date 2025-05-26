@@ -1,24 +1,20 @@
+// scanner.hpp
 #pragma once
 #include <vector>
 #include <string>
-#include <memory>
 
 struct DeviceInfo {
     std::string name;
     std::string ip;
     std::string mac;
-    std::string type;  // PC/Phone/Tablet等
 };
 
 class NetworkScanner {
 public:
-    NetworkScanner();
-    ~NetworkScanner();
-    
-    // 扫描局域网设备
+    // 扫描局域网设备(简化版)
     std::vector<DeviceInfo> scan(int timeout_ms = 1000);
     
 private:
-    struct Impl;
-    std::unique_ptr<Impl> pimpl;
+    // 使用ARP扫描发现设备
+    std::vector<DeviceInfo> arp_scan(const std::string& interface);
 };

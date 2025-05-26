@@ -1,145 +1,140 @@
-#include "../include/scanner.hpp"
-#include "../include/samba_client.hpp"
+#include "scanner.hpp"
+#include "samba_client.hpp"
 #include <iostream>
-#include <jsoncpp/json/json.h>
-#include <fstream>
 #include <iomanip>
 #include <vector>
-#include <string>
+#include <algorithm>
 
+// 打印设备列表
 void print_devices(const std::vector<DeviceInfo>& devices) {
-    std::cout << "发现 " << devices.size() << " 个设备:\n";
-    std::cout << std::left << std::setw(15) << "IP地址"
+    std::cout << "\n发现 " << devices.size() << " 个设备:\n";
+    std::cout << std::left 
+              << std::setw(18) << "IP地址"
               << std::setw(20) << "MAC地址"
-              << std::setw(20) << "设备名称"
-              << std::setw(15) << "类型" << "\n";
-    for (const auto& device : devices) {
-        std::cout << std::left << std::setw(15) << device.ip
-                  << std::setw(20) << device.mac
-                  << std::setw(20) << device.name
-                  << std::setw(15) << device.type << "\n";
-    }
-}
-
-void list_remote_files(SambaClient& client, const std::string& share_name) {
-    try {
-        auto files = client.list_files(share_name);
-        if (files.empty()) {
-            std::cout << "共享目录中没有文件可下载。\n";
-            return;
-        }
-        std::cout << "\n可下载的文件列表:\n";
-        std::cout << std::left << std::setw(5) << "ID"
-                  << std::setw(40) << "文件名"
-                  << std::setw(15) << "大小" << "\n";
-        for (size_t i = 0; i < files.size(); ++i) {
-            std::cout << std::left << std::setw(5) << i+1
-                      << std::setw(40) << files[i].name
-                      << std::setw(15) << files[i].size << "\n";
-        }
-    } catch (const std::exception& e) {
-        std::cerr << "获取文件列表失败: " << e.what() << "\n";
-    }
-}
-
-void samba_interaction() {
-    SambaClient client;
+              << std::setw(15) << "设备名称" << "\n";
+    std::cout << std::string(53, '-') << "\n";
     
-    // 1. 扫描所有配置的Samba节点
-    auto nodes = client.scan_configured_nodes();
-    if (nodes.empty()) {
-        // 如果没有配置节点，尝试扫描本地网络
-        NetworkScanner scanner;
-        auto devices = scanner.scan(1000);
-        for (const auto& device : devices) {
-            if (device.type.find("smb") != std::string::npos) {
-                nodes.push_back(device.ip);
-            }
-        }
+    for (const auto& device : devices) {
+        std::cout << std::left 
+                  << std::setw(18) << device.ip
+                  << std::setw(20) << device.mac
+                  << std::setw(15) << (device.name.empty() ? "Unknown" : device.name) << "\n";
     }
+}
 
-    std::cout << "\n发现 " << nodes.size() << " 个Samba节点:\n";
-    for (size_t i = 0; i < nodes.size(); ++i) {
-        std::cout << i+1 << ". " << nodes[i] << "\n";
-    }
-    if (nodes.empty()) return;
-
-    // 2. 选择要操作的节点
-    std::cout << "选择节点(1-" << nodes.size() << "): ";
-    size_t node_choice;
-    std::cin >> node_choice;
-    if (node_choice < 1 || node_choice > nodes.size()) return;
-
-    // 3. 获取共享目录
-    Json::Value root;
-    std::ifstream config("config.json");
-    if (config.is_open()) {
-        config >> root;
-    } else {
-        // 如果没有配置文件，使用默认凭证
-        root["username"] = "guest";
-        root["password"] = "";
-    }
-
-    if (client.connect(nodes[node_choice-1],
-                      root["username"].asString(),
-                      root["password"].asString())) {
-        auto shares = client.list_shares();
-        std::cout << "可用共享目录:\n";
-        for (size_t i = 0; i < shares.size(); ++i) {
-            std::cout << i+1 << ". " << shares[i].name << "\n";
-        }
-
-        // 4. 文件操作
-        if (!shares.empty()) {
-            std::cout << "选择共享目录(1-" << shares.size() << "): ";
-            size_t share_choice;
-            std::cin >> share_choice;
-            if (share_choice >= 1 && share_choice <= shares.size()) {
-                // 显示可下载文件列表
-                list_remote_files(client, shares[share_choice-1].name);
+// 检查Samba服务并交互
+void check_and_interact_with_samba(SambaClient& client, const std::string& ip) {
+    // 常见Samba端口列表
+    const std::vector<int> samba_ports = {445, 139, 4455, 4456, 4457, 4458, 4459, 4460, 4461, 4464};
+    
+    std::cout << "\n扫描设备 " << ip << " 的Samba服务...\n";
+    
+    bool found_samba = false;
+    
+    for (int port : samba_ports) {
+        if (client.check_samba(ip, port)) {
+            found_samba = true;
+            std::cout << "✔ 发现Samba服务: " << ip << ":" << port << "\n";
+            
+            auto shares = client.list_shares(ip, port);
+            if (!shares.empty()) {
+                std::cout << "  可用共享目录:\n";
+                for (const auto& share : shares) {
+                    std::cout << "    - " << share.name << "\n";
+                }
                 
-                std::cout << "\n1. 下载文件\n2. 上传文件\n选择操作: ";
-                int op;
-                std::cin >> op;
-                std::string remote, local;
+                // 用户交互
+                std::cout << "\n输入要操作的共享目录名(或回车跳过): ";
+                std::string share_name;
+                std::getline(std::cin, share_name);
                 
-                if (op == 1) {
-                    std::cout << "输入远程文件路径: ";
-                    std::cin >> remote;
-                    std::cout << "输入本地保存路径: ";
-                    std::cin >> local;
-                    if (client.download(shares[share_choice-1].name, remote, local)) {
-                        std::cout << "下载成功! 文件已保存到: " << local << "\n";
+                if (!share_name.empty()) {
+                    // 验证共享是否存在
+                    auto it = std::find_if(shares.begin(), shares.end(), 
+                        [&share_name](const SambaShare& s) { return s.name == share_name; });
+                    
+                    if (it != shares.end()) {
+                        std::cout << "\n1. 下载文件\n2. 上传文件\n选择操作(1/2): ";
+                        std::string choice;
+                        std::getline(std::cin, choice);
+                        
+                        if (choice == "1" || choice == "2") {
+                            std::string remote_path, local_path;
+                            
+                            if (choice == "1") {
+                                std::cout << "输入远程文件路径(相对共享目录): ";
+                                std::getline(std::cin, remote_path);
+                                std::cout << "输入本地保存路径: ";
+                                std::getline(std::cin, local_path);
+                                
+                                if (client.download(ip, share_name, remote_path, local_path)) {
+                                    std::cout << "✓ 下载成功!\n";
+                                } else {
+                                    std::cerr << "✗ 下载失败!\n";
+                                }
+                            } else {
+                                std::cout << "输入本地文件路径: ";
+                                std::getline(std::cin, local_path);
+                                std::cout << "输入远程保存路径(相对共享目录): ";
+                                std::getline(std::cin, remote_path);
+                                
+                                if (client.upload(ip, share_name, local_path, remote_path)) {
+                                    std::cout << "✓ 上传成功!\n";
+                                } else {
+                                    std::cerr << "✗ 上传失败!\n";
+                                }
+                            }
+                        } else {
+                            std::cout << "无效选择，跳过操作\n";
+                        }
                     } else {
-                        std::cerr << "下载失败! 请检查路径和权限。\n";
-                    }
-                } else if (op == 2) {
-                    std::cout << "输入本地文件路径: ";
-                    std::cin >> local;
-                    std::cout << "输入远程保存路径: ";
-                    std::cin >> remote;
-                    if (client.upload(shares[share_choice-1].name, local, remote)) {
-                        std::cout << "上传成功! 文件已保存到共享目录。\n";
-                    } else {
-                        std::cerr << "上传失败! 请检查路径和权限。\n";
+                        std::cout << "共享目录不存在，跳过操作\n";
                     }
                 }
+            } else {
+                std::cout << "  该Samba服务没有可用的共享目录\n";
             }
         }
-    } else {
-        std::cerr << "连接Samba服务器失败! 请检查用户名和密码。\n";
+    }
+    
+    if (!found_samba) {
+        std::cout << "✗ 未发现Samba服务\n";
     }
 }
 
 int main() {
-    // 1. 网络设备扫描 (保持原样)
-    NetworkScanner scanner;
-    auto devices = scanner.scan(1000);
-    print_devices(devices);
-    
-    // 2. Samba交互
-    samba_interaction();
+    try {
+        // 1. 扫描局域网设备
+        std::cout << "正在扫描局域网设备...\n";
+        NetworkScanner scanner;
+        auto devices = scanner.scan();
+        
+        if (devices.empty()) {
+            std::cout << "未发现任何设备\n";
+            return 0;
+        }
+
+        // 2. 添加本地回环地址(127.0.0.1)到扫描列表
+        DeviceInfo localhost;
+        localhost.ip = "127.0.0.1";
+        localhost.mac = "00:00:00:00:00:00";  // 本地回环没有真实MAC
+        localhost.name = "localhost";
+        devices.push_back(localhost);
+        
+        print_devices(devices);
+
+        
+        // 2. 检查Samba服务
+        SambaClient client;
+        
+        for (const auto& device : devices) {
+            check_and_interact_with_samba(client, device.ip);
+        }
+        
+    } catch (const std::exception& e) {
+        std::cerr << "发生错误: " << e.what() << "\n";
+        return 1;
+    }
     
     return 0;
 }
