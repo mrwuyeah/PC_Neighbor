@@ -1,0 +1,3 @@
+/home/wjj/pc_Neighbor/build/CMakeFiles/rebuild_cache.dir
+/home/wjj/pc_Neighbor/build/CMakeFiles/edit_cache.dir
+/home/wjj/pc_Neighbor/build/CMakeFiles/pc_Neighbor.dir

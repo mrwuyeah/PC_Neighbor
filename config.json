@@ -1,0 +1,21 @@
+{
+    "username": "wjj",
+    "password": "20030509a",
+    "servers": [
+        {
+            "ip": "127.0.0.1",
+            "port": 4455,
+            "share_name": "Shared_1"
+        },
+        {
+            "ip": "127.0.0.1",
+            "port": 4456,
+            "share_name": "Shared_2"
+        },
+        {
+            "ip": "127.0.0.1",
+            "port": 4464,
+            "share_name": "Shared_10"
+        }
+    ]
+}
